@@ -22,93 +22,124 @@
  * - метод/ы получения доступа по индексу ( operator[] )
 */
 
-#include "library/CListContainer.h"
-#include "library/CVectorContainer.h"
-
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
-#include <cstddef>
+#include <iterator>
+#include <map>
+#include <vector>
+#include <chrono>
+#include <thread>
+#include <mutex>
 
-template<typename T>
-void test(Container<T> &container);
 
-int main() {
+using namespace std;
 
-  std::cout << "List container: " << std::endl;
-  
-  // * 1. создание объекта контейнера для хранения объектов типа int
-  std::cout << "1. создание объекта контейнера для хранения объектов типа int: " << std::endl;
-  CListContainer<int> lContainer;
-  
-  test(lContainer);
+const size_t TOPK = 10;
 
-  std::cout << "Vector container: " << std::endl;
-  
-  // * 1. создание объекта контейнера для хранения объектов типа int
-  std::cout << "1. создание объекта контейнера для хранения объектов типа int: " << std::endl;
-  CVectorContainer<int> vContainer;
+using Counter = std::map<std::string, std::size_t>;
 
-  test(vContainer);
+std::string tolower(const std::string &str);
+void count_words(std::istream& stream, Counter&);
+void print_topk(std::ostream& stream, const Counter&, const size_t k);
 
-  return 0;
+Counter all_dicts;
+mutex mx;
+
+void add_maps(Counter& m1, Counter& m2)
+{
+    if (!m1.size()){
+        m1 = m2;
+        return;
+    }
+    for(auto it_m1 = m1.begin(), end_m1 = m1.end(),
+             it_m2 = m2.begin(), end_m2 = m2.end();
+             it_m1 != end_m1 ;)
+    {
+        if(it_m1 != end_m1 && it_m2 != end_m2) {
+             if (it_m1->first == it_m2->first) it_m1->second += it_m2->second;
+        }
+        ++it_m1;
+        ++it_m2;
+    }
 }
 
-template<typename T>
-void test(Container<T> &container) {
-  // Размер масива данных
-  size_t st_size = 10;
+int count_chr(string name, vector<Counter>& cnts, mutex& mx)
+{
+    Counter freq_dict;
+    std::ifstream input{name};
+    if (!input.is_open()) {
+        std::cerr << "Failed to open file " << name << '\n';
+        return EXIT_FAILURE;
+    }
+    count_words(input, freq_dict);
+    lock_guard lock(mx);
+    cnts.emplace_back(freq_dict);
 
-  // * 2. добавление в контейнер десяти элементов (0, 1 ... 9)
-  std::cout << "2. добавление в контейнер десяти элементов (0, 1 ... 9): " << std::endl;
-  for (size_t i = 0; i < st_size; i++) {
-    container.push_back(i);
-  }
+    return 0;
+}
 
-  // * 3. вывод содержимого контейнера на экран ожидаемый результат: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-  std::cout << "3. вывод содержимого контейнера на экран ожидаемый результат: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9: " << std::endl;
-  container.print();
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        std::cerr << "Usage: topk_words [FILES...]\n";
+        return EXIT_FAILURE;
+    }
 
-  // * 4. вывод размера контейнера на экран ожидаемый результат: 10
-  std::cout << "4. вывод размера контейнера на экран ожидаемый результат: 10: " << std::endl;
-  std::cout << "Размер массива: " << container.get_size() << std::endl;
+    vector<std::thread> counts_chr;
+    vector<Counter> counts;
 
-  // * 5. удаление третьего (по счёту), пятого и седьмого элементов
-  /**
-   * ! При удалении элементов по счету происходит уменьшение размера массива. Поэтому номера позиций не соответствуют
-   * ! номерам позиций из задания
-  */
-  std::cout << "5. удаление третьего (по счёту), пятого и седьмого элементов: " << std::endl;
-  container.erase(2);
-  std::cout << "Размер массив после удаления третьего (по счету) элемента: " << container.get_size() << std::endl;
-  container.erase(3);
-  std::cout << "Размер массив после удаления пятого (по счету) элемента: " << container.get_size() << std::endl;
-  container.erase(4);
-  std::cout << "Размер массив после удаления седьмого (по счету) элемента: " << container.get_size() << std::endl;
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 1; i < argc; ++i) {
+        counts_chr.emplace_back(count_chr, argv[i], ref(counts), ref(mx));
+    }
 
-  // * 6. вывод содержимого контейнера на экран ожидаемый результат: 0, 1, 3, 5, 7, 8, 9
-  std::cout << "6. вывод содержимого контейнера на экран ожидаемый результат: 0, 1, 3, 5, 7, 8, 9: " << std::endl;
-  container.print();
+    for (auto& i : counts_chr) {
+        i.join();
+    }
 
-  // 7. добавление элемента 10 в начало контейнера
-  std::cout << "7. добавление элемента 10 в начало контейнера: " << std::endl;
-  container.insert(0, 10);
+    while (counts.size()) {
+        add_maps(all_dicts,counts.back());
+        counts.pop_back();
+    }
 
-  // 8. вывод содержимого контейнера на экран ожидаемый результат: 10, 0, 1, 3, 5, 7, 8, 9
-  std::cout << "8. вывод содержимого контейнера на экран ожидаемый результат: 10, 0, 1, 3, 5, 7, 8, 9: " << std::endl;
-  container.print();
+    print_topk(std::cout, all_dicts, TOPK);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    std::cout << "Elapsed time is " << elapsed_ms.count() << " us\n";
+}
 
-  // 9. добавление элемента 20 в середину контейнера
-  std::cout << "9. добавление элемента 20 в середину контейнера: " << std::endl;
-  container.insert((container.get_size()/2), 20);
+std::string tolower(const std::string &str) {
+    std::string lower_str;
+    std::transform(std::cbegin(str), std::cend(str),
+                   std::back_inserter(lower_str),
+                   [](unsigned char ch) { return std::tolower(ch); });
+    return lower_str;
+}
 
-  // 10. вывод содержимого контейнера на экран ожидаемый результат: 10, 0, 1, 3, 20, 5, 7, 8, 9
-  std::cout << "10. вывод содержимого контейнера на экран ожидаемый результат: 10, 0, 1, 3, 20, 5, 7, 8, 9: " << std::endl;
-  container.print();
-  
-  // 11. добавление элемента 30 в конец контейнера
-  std::cout << "11. добавление элемента 30 в конец контейнера: " << std::endl;
-  container.push_back(30);
-  
-  // 12. вывод содержимого контейнера на экран ожидаемый результат: 10, 0, 1, 3, 20, 5, 7, 8, 9, 30
-  std::cout << "12. вывод содержимого контейнера на экран ожидаемый результат: 10, 0, 1, 3, 20, 5, 7, 8, 9, 30: " << std::endl;
-  container.print();
+void count_words(std::istream& stream, Counter& counter) {
+    std::for_each(std::istream_iterator<std::string>(stream),
+                  std::istream_iterator<std::string>(),
+                  [&counter](const std::string &s) { ++counter[tolower(s)]; });    
+}
+
+void print_topk(std::ostream& stream, const Counter& counter, const size_t k) {
+    std::vector<Counter::const_iterator> words;
+    words.reserve(counter.size());
+    for (auto it = std::cbegin(counter); it != std::cend(counter); ++it) {
+        words.push_back(it);
+    }
+
+     std::partial_sort(
+        std::begin(words), std::begin(words) + k, std::end(words),
+        [](auto lhs, auto &rhs) { return lhs->second > rhs->second; });
+
+    std::for_each(
+        std::begin(words), std::begin(words) + k,
+        [&stream](const Counter::const_iterator &pair) {
+            stream << std::setw(4) << pair->second << " " << pair->first
+                      << '\n';
+        });
 }
